@@ -1,10 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
-/*
- * Copyright (C) 2022, Peyton Howe
- *
- * A simple dual-camera libcamera capture program
- */
-
 #include <iomanip>
 #include <iostream>
 #include <string> 
@@ -13,9 +6,13 @@
 #include <queue>
 #include <sys/mman.h>
 
-#include "event_loop.h"
-#include "preview.h"
+#include "loop.h"
 
+// ROS 2 specific headers
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/image.hpp>
+#include <cv_bridge/cv_bridge.hpp>
+#include <opencv2/opencv.hpp>
 
 struct options
 {
@@ -46,8 +43,49 @@ std::map<Stream *, std::queue<FrameBuffer *>> frame_buffers[2];
 FrameBufferAllocator *allocators[2];
 static EventLoop loop;
 
-static void processRequest(Request *request);
-static void processRequest2(Request *request);
+// ROS 2 node and publishers
+std::shared_ptr<rclcpp::Node> ros_node;
+rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr left_pub;
+rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr right_pub;
+
+void publish_image(const cv::Mat &image, const std::string &camera)
+{
+    // Convert OpenCV image to ROS 2 Image message
+    cv_bridge::CvImage cv_image;
+    cv_image.image = image;
+    cv_image.encoding = "bgr8"; // Adjust encoding as necessary
+
+    auto img_msg = cv_image.toImageMsg();
+
+    if (camera == "left")
+    {
+        left_pub->publish(*img_msg);
+    }
+    else if (camera == "right")
+    {
+        right_pub->publish(*img_msg);
+    }
+}
+
+static void processRequest(Request *request)
+{
+	// Example: Capture and publish left camera image
+	cv::Mat img(480, 640, CV_8UC3, mapped_buffers[0][request->buffers().begin()->second].data());
+	publish_image(img, "left");
+
+	request->reuse(Request::ReuseBuffers);
+	cameras[0]->queueRequest(request);  // Re-queue the request to continuously capture
+}
+
+static void processRequest2(Request *request)
+{	
+	// Example: Capture and publish right camera image
+	cv::Mat img(480, 640, CV_8UC3, mapped_buffers[1][request->buffers().begin()->second].data());
+	publish_image(img, "right");
+
+	request->reuse(Request::ReuseBuffers);
+	cameras[1]->queueRequest(request);  // Re-queue the request to continuously capture
+}
 
 static void requestComplete(Request *request)
 {
@@ -63,53 +101,6 @@ static void requestComplete2(Request *request)
 	loop.callLater(std::bind(&processRequest2, request));
 }
 
-static void processRequest(Request *request)
-{
-	//float framerate = 0;
-	//auto ts = request->metadata().get(controls::SensorTimestamp);
-	//uint64_t timestamp = ts ? *ts : request->buffers().begin()->second->metadata().timestamp;
-	//if (last_timestamp_ == 0 || last_timestamp_ == timestamp)
-		//framerate = 0;
-	//else
-		//framerate = 1e9 / (timestamp - last_timestamp_);
-	//last_timestamp_ = timestamp;
-	
-	////if (framerate < 55)
-	//std::cout << "Cam1 fps: " << framerate << '\n';
-	
-	const Request::BufferMap &buffers = request->buffers();
-	for (auto bufferPair : buffers) {
-		const Stream *stream = bufferPair.first;
-		FrameBuffer *buffer = bufferPair.second;
-		StreamConfiguration const &cfg = stream->configuration();
-		int fd = buffer->planes()[0].fd.get();
-		
-		makeBuffer(fd, cfg, buffer, 1);
-	}
-	
-	/* Re-queue the Request to the camera. */
-	
-	request->reuse(Request::ReuseBuffers);
-	cameras[0]->queueRequest(request);
-}
-
-static void processRequest2(Request *request)
-{	
-	const Request::BufferMap &buffers2 = request->buffers();
-	for (auto bufferPair : buffers2) {
-		const Stream *stream = bufferPair.first;
-		FrameBuffer *buffer2 = bufferPair.second;
-		StreamConfiguration const &cfg2 = stream->configuration();
-		int fd2 = buffer2->planes()[0].fd.get();
-		
-		makeBuffer(fd2, cfg2, buffer2, 2);
-	}
-	
-	/* Re-queue the Request to the camera. */
-	request->reuse(Request::ReuseBuffers);
-	cameras[1]->queueRequest(request);
-}
-
 void makeRequests(int i)
 {
 	auto free_buffers(frame_buffers[i]);
@@ -122,7 +113,6 @@ void makeRequests(int i)
 			{
 				if (free_buffers[stream].empty())
 				{
-
 					std::cout << "Requests created\n";
 					return;
 				}
@@ -146,56 +136,35 @@ void configureCamera(int i, options& params)
 {
 	std::string cameraId = cm->cameras()[i]->id();
 	cameras[i] = cm->get(cameraId);
-	cameras[i]->acquire();
-	std::cout << "Acquired Camera: " << cameras[i]->id() << '\n';
-
+	if (cameras[i]->acquire())
+		throw std::runtime_error("failed to acquire camera " + cameraId);
+	else
+		std::cout << "Acquired camera " << cameraId << std::endl;
 	configs[i] = cameras[i]->generateConfiguration( { StreamRole::Viewfinder } );
-	
 	if (!configs[i])
-		std::cout << "failed to generate viewfinder configuration\n";
+        throw std::runtime_error("failed to generate viewfinder configuration");
+
+    configs[i]->at(0).pixelFormat = libcamera::formats::RGB888;
 	
     StreamConfiguration &streamConfig = configs[i]->at(0);
 	std::cout << "Default viewfinder configuration is: " << streamConfig.toString() << std::endl;
 	
-	int val = cameras[i]->configure(configs[i].get());
-    if (val) {
-        std::cout << "CONFIGURATION FAILED!" << std::endl;
-        std::exit(EXIT_FAILURE);
-    }
-	
-    Size size(1280, 960);
+	Size size(1280, 960);
 	auto area = cameras[i]->properties().get(properties::PixelArrayActiveAreas);
-	if (params.width != 0 && params.height != 0) //width and height were input
-		size=Size(params.width, params.height);
+	if (params.width != 0 && params.height != 0)
+		size = Size(params.width, params.height);
     else if (area)
 	{
-		// The idea here is that most sensors will have a 2x2 binned mode that
-		// we can pick up.
 		size = (*area)[0].size() / 2;
-		//size = size.boundedToAspectRatio(Size(params.width, params.height));
-		size.alignDownTo(2, 2); // YUV420 will want to be even
+		size.alignDownTo(2, 2);
 		std::cout << "Viewfinder size chosen is " << size.toString() << std::endl;
 	}
 	
 	configs[i]->at(0).pixelFormat = libcamera::formats::YUV420;
 	configs[i]->at(0).size = size;
-	
 	configs[i]->at(0).bufferCount = params.buffer_count;
-	
 	configs[i]->validate();
-	std::cout << "Validated viewfinder configuration is: "
-		  << streamConfig.toString() << std::endl;
-		  
-	val = cameras[i]->configure(configs[i].get());
-	if (val) {
-		std::cout << "CONFIGURATION FAILED!" << std::endl;
-		//return EXIT_FAILURE;
-	}
-
-	/*
-	 * Once we have a validated configuration, we can apply it to the
-	 * Camera.
-	 */
+	std::cout << "Validated viewfinder configuration is: " << streamConfig.toString() << std::endl;
 	cameras[i]->configure(configs[i].get());
 	
 	allocators[i] = new FrameBufferAllocator(cameras[i]);
@@ -221,10 +190,6 @@ void configureCamera(int i, options& params)
 			}
 			frame_buffers[i][stream].push(buffer.get());
 		}
-		
-
-		size_t allocated = allocators[i]->buffers(cfg.stream()).size();
-		std::cout << "Allocated " << allocated << " buffers for stream" << std::endl;
 	}
 	
 	makeRequests(i);
@@ -232,19 +197,24 @@ void configureCamera(int i, options& params)
 
 int main(int argc, char **argv)
 {
+	rclcpp::init(argc, argv);
+	ros_node = std::make_shared<rclcpp::Node>("dual_camera_publisher");
+	left_pub = ros_node->create_publisher<sensor_msgs::msg::Image>("camera/left/image_raw", 10);
+	right_pub = ros_node->create_publisher<sensor_msgs::msg::Image>("camera/right/image_raw", 10);
+
 	options params = {
 		.dual_cameras = 1,
-		.width = 0, //default
-		.height = 0, //default
+		.width = 640,
+		.height = 480,
 		.prev_x = 0, 
 		.prev_y = 0, 
 		.prev_width = 1920, 
 		.prev_height = 1080,
-		.fps = 30.0,
+		.fps = 100.0,
 		.shutterSpeed = 0,
 		.exposure = "normal",
 		.exposure_index = cam_exposure_index,
-		.timeout = 10,
+		.timeout = 100,
 		.buffer_count = 4
 	};
 			
@@ -277,7 +247,7 @@ int main(int argc, char **argv)
 				else if (strcmp(optarg, "short") == 0) params.exposure = "short";
 				else if (strcmp(optarg, "long") == 0) params.exposure = "long";
 				else if (strcmp(optarg, "custom") == 0) params.exposure = "custom";
-				else printf("Unkown exposure mode, defaulting to noraml\n");
+				else printf("Unknown exposure mode, defaulting to normal\n");
 				break;
 			case 't':
 				params.timeout = std::stoi(optarg);
@@ -291,17 +261,13 @@ int main(int argc, char **argv)
 		}
 	}
 	
-	if (arg < 1)
-		printf("Usage: %s [-d dual cameras] [-w width] [-h height] [-p width,height,x_off,y_off][-f fps] [-s shutter-speed-ns] [-e exposure] [-t timeout] \n", argv[0]);
-	
 	// Initialize the camera Manager
 	cm = std::make_unique<CameraManager>();
 	cm->start();
 
 	// Ensure that cameras are connected
 	if (cm->cameras().empty()) {
-		std::cout << "No cameras were identified on the system."
-			  << std::endl;
+		std::cout << "No cameras were identified on the system." << std::endl;
 		cm->stop();
 		return EXIT_FAILURE;
 	}
@@ -332,29 +298,25 @@ int main(int argc, char **argv)
 	controls.set(controls::AeExposureMode, cam_exposure_index);
 	controls.set(controls::ExposureTime, params.shutterSpeed);
 	controls.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({ frame_time, frame_time }));
-	
-	//if (!controls.get(controls::Brightness)) // Adjust the brightness of the output images, in the range -1.0 to 1.0
-	//	controls.set(controls::Brightness, 0.0);
-	//if (!controls.get(controls::Contrast)) // Adjust the contrast of the output image, where 1.0 = normal contrast
-	//	controls.set(controls::Contrast, 1.0);
-    
-    // Set the exposure time
-    //controls.set(controls::ExposureTime, frame_time);
     
     for (int i = 0; i < 2; i++) {
 		cameras[i]->start(&controls);
 		for (std::unique_ptr<Request> &request : requests[i])
 			cameras[i]->queueRequest(request.get());
 	}
-		
-	// Setup EGL context
-	makeWindow("simple-cam", params.prev_x, params.prev_y, params.prev_width, params.prev_height);
 
-	loop.timeout(params.timeout);
-	int ret = loop.exec(params.prev_width, params.prev_height, params.timeout);
-	std::cout << "Capture ran for " << params.timeout << " seconds and "
-		  << "stopped with exit status: " << ret << std::endl;
-
+	// Continuous loop for processing camera requests and ROS spinning
+	while (rclcpp::ok()) {
+		loop.callLater([&](){
+			for (std::unique_ptr<Request> &request : requests[0]) {
+				processRequest(request.get());
+			}
+			for (std::unique_ptr<Request> &request : requests[1]) {
+				processRequest2(request.get());
+			}
+		});
+		rclcpp::spin_some(ros_node);  // Handle ROS messages
+	}
 
 	for (int i = 0; i < 2; i++) {
 		cameras[i]->stop();
@@ -364,7 +326,7 @@ int main(int argc, char **argv)
 		requests[i].clear();
 	}
     cm->stop();
-	cleanup();
 
+	rclcpp::shutdown();
 	return EXIT_SUCCESS;
 }

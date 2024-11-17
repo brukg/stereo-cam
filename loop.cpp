@@ -1,12 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
-/*
- * Copyright (C) 2020, Google Inc.
- *
- * event_loop.cpp - Event loop based on cam
- */
-
-#include "event_loop.h"
-#include "preview.h"
+#include "loop.h"
 
 #include <assert.h>
 #include <event2/event.h>
@@ -57,9 +49,9 @@ int EventLoop::exec(int width, int height, int timeout)
 			
 			//std::cout << "displaying frames \n";
 			//std::cout << "here doing stuff \n";
-			dispatchCalls();
+			// dispatchCalls();
 			//event_base_loop(event_, EVLOOP_NO_EXIT_ON_EMPTY);
-			displayFrame(width, height);
+			// displayFrame(width, height);
 			nFrames++;
 			if (nFrames % 160 == 0)
 			{ // Log FPS

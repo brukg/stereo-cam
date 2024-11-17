@@ -1,63 +1,60 @@
-cmake_minimum_required(VERSION 3.6)
+cmake_minimum_required(VERSION 3.8)
+project(stereo_cam)
 
-project(SimpleCam
-	DESCRIPTION "A small and documented example application for libcamera"
-	LANGUAGES CXX)
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
 
-set (CMAKE_CXX_STANDARD 17)
+# Find dependencies
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(OpenCV REQUIRED)
+find_package(PkgConfig REQUIRED)
 
-set (CMAKE_CXX_FLAGS "-Wall -Winvalid-pch -Wnon-virtual-dtor -Wextra -Werror -Wno-unused-parameter")
-
-option(BUILD_SHARED_LIBS "Build using shared libraries" ON)
-
-find_package(PkgConfig)
-
+# Check for libcamera and libevent
 pkg_check_modules(LIBCAMERA REQUIRED IMPORTED_TARGET libcamera)
-message(STATUS "libcamera library found:")
-message(STATUS "    version: ${LIBCAMERA_VERSION}")
-message(STATUS "    libraries: ${LIBCAMERA_LINK_LIBRARIES}")
-message(STATUS "    include path: ${LIBCAMERA_INCLUDE_DIRS}")
-
-# libevent is used specifically by simple-cam as its event loop.
-# Applications may use a different event handling implementation.
 pkg_check_modules(LIBEVENT REQUIRED IMPORTED_TARGET libevent_pthreads)
-message(STATUS "libevent_pthreads library found:")
-message(STATUS "    version: ${LIBEVENT_VERSION}")
-message(STATUS "    libraries: ${LIBEVENT_LINK_LIBRARIES}")
-message(STATUS "    include path: ${LIBEVENT_INCLUDE_DIRS}")
 
-pkg_check_modules(X11 QUIET x11)
-message(STATUS "X11 library found:")
-message(STATUS "    version: ${X11_VERSION}")
-message(STATUS "    libraries: ${X11_LINK_LIBRARIES}")
-message(STATUS "    include path: ${X11_INCLUDE_DIRS}")
+# Create the executable
+add_executable(stereo_cam 
+  src/stereo.cpp
+  src/loop.cpp
+)
 
-pkg_check_modules(EPOXY QUIET epoxy)
-message(STATUS "epoxy library found:")
-message(STATUS "    version: ${EPOXY_VERSION}")
-message(STATUS "    libraries: ${EPOXY_LINK_LIBRARIES}")
-message(STATUS "    include path: ${EPOXY_INCLUDE_DIRS}")
+# Include directories
+target_include_directories(stereo_cam PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${LIBCAMERA_INCLUDE_DIRS}
+  ${LIBEVENT_INCLUDE_DIRS}
+)
 
-pkg_check_modules(LIBGBM QUIET gbm)
-message(STATUS "LIBGBM library found:")
-message(STATUS "    version: ${LIBGBM_VERSION}")
-message(STATUS "    libraries: ${LIBGBM_LINK_LIBRARIES}")
-message(STATUS "    include path: ${LIBGBM_INCLUDE_DIRS}")
+# Link libraries
+target_link_libraries(stereo_cam
+  ${rclcpp_LIBRARIES}
+  ${sensor_msgs_LIBRARIES}
+  ${cv_bridge_LIBRARIES}
+  ${OpenCV_LIBS}
+  PkgConfig::LIBCAMERA
+  PkgConfig::LIBEVENT
+)
 
-pkg_check_modules(LIBDRM REQUIRED IMPORTED_TARGET libdrm)
-#message(STATUS "LIBDRM_LINK_LIBRARIES=${LIBDRM_LINK_LIBRARIES}")
-message(STATUS "LIBDRM library found")
-message(STATUS "    version: ${LIBDRM_VERSION}")
-message(STATUS "    libraries: ${LIBDRM_LINK_LIBRARIES}")
-message(STATUS "    include path: ${LIBDRM_INCLUDE_DIRS}")
+# Set C++ standard
+target_compile_features(stereo_cam PUBLIC c_std_99 cxx_std_17)
 
-include_directories(${CMAKE_SOURCE_DIR} ${LIBCAMERA_INCLUDE_DIRS} ${LIBEVENT_INCLUDE_DIRS} ${LIBDRM_INCLUDE_DIRS}) 
-set(TARGET_LIBS ${TARGET_LIBS} ${X11_LIBRARIES} ${EPOXY_LIBRARIES} ${LIBGBM_LIBRARIES})
+# Install targets
+install(TARGETS stereo_cam
+  DESTINATION lib/${PROJECT_NAME}
+)
 
-add_executable(simple-cam event_loop.cpp preview.cpp simple-cam.cpp) 
+# Install launch files if you have any
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}/
+  PATTERN "*.launch.*"
+)
 
-target_link_libraries(simple-cam PkgConfig::LIBEVENT)
-target_link_libraries(simple-cam PkgConfig::LIBCAMERA)
-target_link_libraries(simple-cam PkgConfig::LIBDRM)
-target_link_libraries(simple-cam ${TARGET_LIBS})
+ament_package()
 

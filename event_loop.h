@@ -4,6 +4,8 @@
 #include <functional>
 #include <list>
 #include <mutex>
+#include <libcamera/libcamera.h>
+#include <opencv2/opencv.hpp>
 
 struct event_base;
 
