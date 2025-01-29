@@ -41,7 +41,8 @@ def generate_launch_description():
             parameters=[
                 LaunchConfiguration('config_file'),
                 {'robot_description': robot_description},
-                {'resolution_preset': LaunchConfiguration('resolution_preset')}
+                {'resolution_preset': LaunchConfiguration('resolution_preset')},
+                {'frame_rate': 30}
             ],
             output='screen'
         ),

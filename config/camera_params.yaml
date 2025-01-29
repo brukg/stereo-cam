@@ -1,6 +1,6 @@
 stereo_cam_node:
   ros__parameters:
-    resolution_preset: "1080p"
+    resolution_preset: "1080p" #full, 1080p, 720p, vga
     frame_rate: 30
     imu_rate: 100
     frame_id: "stereo_camera_base"

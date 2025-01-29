@@ -27,7 +27,7 @@ struct CameraConfig {
     struct Resolution {
         int width;
         int height;
-        int fps;
+        double fps;
     };
     
     static const std::vector<Resolution> SUPPORTED_MODES;  // Declaration only
@@ -39,6 +39,7 @@ public:
     ~StereoNode();
 
     void initialize();
+    void on_configure();
 
 private:
     void timer_callback();

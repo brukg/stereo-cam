@@ -4,35 +4,90 @@ namespace stereo_cam {
 
 // Definition of static member
 const std::vector<CameraConfig::Resolution> CameraConfig::SUPPORTED_MODES = {
-    {3280, 2464, 15}, // Full resolution
-    {1920, 1080, 30}, // 1080p
-    {1280, 720, 60},  // 720p
-    {640, 480, 90}    // VGA
+    {3280, 2464, 21.19}, // Full resolution
+    {1920, 1080, 47.57}, // 1080p
+    {1280, 720, 41.85},  // 720p
+    {640, 480, 206.65}    // VGA
 };
 
 StereoNode::StereoNode(const rclcpp::NodeOptions& options)
     : Node("stereo_cam_node", options) {
     
-    // Declare parameters with correct types
-    this->declare_parameter("width", 640);
-    this->declare_parameter("height", 480);
-    this->declare_parameter("frame_rate", 30);
+    // Only declare and get parameters in constructor
+    this->declare_parameter("width", rclcpp::ParameterValue(640));
+    this->declare_parameter("height", rclcpp::ParameterValue(480));
+    this->declare_parameter("frame_rate", rclcpp::ParameterValue(30));
     this->declare_parameter("frame_id", "camera_frame");
     this->declare_parameter("resolution_preset", "1080p");
     this->declare_parameter("imu_rate", 100);
-    this->declare_parameter("left_camera_info_url", "");   // Changed from camera_info_url
-    this->declare_parameter("right_camera_info_url", "");  // Added for right camera
+    this->declare_parameter("left_camera_info_url", "");
+    this->declare_parameter("right_camera_info_url", "");
+
+    // Get resolution from preset
+    std::string preset = this->get_parameter("resolution_preset").as_string();
+    RCLCPP_INFO(get_logger(), "Resolution preset: %s", preset.c_str());
+
+    // Default to VGA if no match
+    width_ = 1920;
+    height_ = 1080;
+    frame_rate_ = 30;
+
+    for (const auto& mode : CameraConfig::SUPPORTED_MODES) {
+        if (preset == "1080p" && mode.width == 1920) {
+            width_ = mode.width;
+            height_ = mode.height;
+            frame_rate_ = mode.fps;
+            RCLCPP_INFO(get_logger(), "Setting 1080p mode: %dx%d @ %d fps", width_, height_, frame_rate_);
+            break;
+        } else if (preset == "720p" && mode.width == 1280) {
+            width_ = mode.width;
+            height_ = mode.height;
+            frame_rate_ = mode.fps;
+            RCLCPP_INFO(get_logger(), "Setting 720p mode: %dx%d @ %d fps", width_, height_, frame_rate_);
+            break;
+        } else if (preset == "full" && mode.width == 3280) {
+            width_ = mode.width;
+            height_ = mode.height;
+            frame_rate_ = mode.fps;
+            RCLCPP_INFO(get_logger(), "Setting full resolution mode: %dx%d @ %d fps", width_, height_, frame_rate_);
+            break;
+        }
+    }
+    RCLCPP_INFO(get_logger(), "Final width: %d, height: %d, frame rate: %d", width_, height_, frame_rate_);
+
+    // // Only override if explicitly set in the launch file
+    // if (this->get_parameter("width").get_type() != rclcpp::ParameterType::PARAMETER_NOT_SET) {
+    //     width_ = this->get_parameter("width").as_int();
+    //     RCLCPP_INFO(get_logger(), "Explicitly set width: %d", width_);
+    // }
+    // if (this->get_parameter("height").get_type() != rclcpp::ParameterType::PARAMETER_NOT_SET) {
+    //     height_ = this->get_parameter("height").as_int();
+    //     RCLCPP_INFO(get_logger(), "Explicitly set height: %d", height_);
+    // }
+    // if (this->get_parameter("frame_rate").get_type() != rclcpp::ParameterType::PARAMETER_NOT_SET) {
+    //     frame_rate_ = this->get_parameter("frame_rate").as_int();
+    // }
 
     // Get parameters
-    width_ = this->get_parameter("width").as_int();
-    height_ = this->get_parameter("height").as_int();
-    frame_rate_ = this->get_parameter("frame_rate").as_int();
     frame_id_ = this->get_parameter("frame_id").as_string();
     imu_rate_ = this->get_parameter("imu_rate").as_int();
     
     // Get camera info URLs
     left_camera_info_url_ = this->get_parameter("left_camera_info_url").as_string();
     right_camera_info_url_ = this->get_parameter("right_camera_info_url").as_string();
+
+    // Register callback for when node is fully up
+    timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(100),
+        std::bind(&StereoNode::on_configure, this));
+}
+
+void StereoNode::on_configure() {
+    // Stop the timer
+    timer_.reset();
+    
+    // Now safe to use shared_from_this()
+    initialize();
 }
 
 void StereoNode::initialize() {
@@ -110,24 +165,36 @@ StereoNode::~StereoNode() {
 }
 
 void StereoNode::configure_cameras() {
+    RCLCPP_INFO(get_logger(), "Configuring cameras with resolution: %dx%d @ %d fps", 
+                width_, height_, frame_rate_);
+
     // Configure left camera
     left_cam_->options->video_width = width_;
     left_cam_->options->video_height = height_;
-    left_cam_->options->framerate = frame_rate_;
+    left_cam_->options->framerate = 30;
 
     // Configure right camera
     right_cam_->options->video_width = width_;
     right_cam_->options->video_height = height_;
-    right_cam_->options->framerate = frame_rate_;
+    right_cam_->options->framerate = 30;
+
+    // Print current configuration
+    RCLCPP_INFO(get_logger(), "Left camera options: %dx%d @ %d fps", 
+                left_cam_->options->video_width,
+                left_cam_->options->video_height,
+                left_cam_->options->framerate);
+
+    RCLCPP_INFO(get_logger(), "Right camera options: %dx%d @ %d fps", 
+                right_cam_->options->video_width,
+                right_cam_->options->video_height,
+                right_cam_->options->framerate);
 
     // Initialize camera info messages
     left_info_.header.frame_id = frame_id_;
     left_info_.width = width_;
     left_info_.height = height_;
-    // Add camera matrix, distortion, etc.
 
     right_info_ = left_info_;  // Copy basic parameters
-    // Modify right camera specific parameters
 }
 
 void StereoNode::timer_callback() {
