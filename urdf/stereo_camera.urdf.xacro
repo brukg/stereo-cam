@@ -1,0 +1,67 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="stereo_camera">
+
+  <xacro:property name="M_PI" value="3.1415926535897931" />
+  <xacro:property name="baseline" value="0.06" /> <!-- 60mm -->
+  <xacro:property name="camera_width" value="0.085" /> <!-- 85mm -->
+  <xacro:property name="camera_height" value="0.024" /> <!-- 24mm -->
+  
+  <xacro:macro name="stereo_camera_macro" params="parent *origin">
+    <!-- Base link -->
+    <link name="stereo_camera_base">
+      <visual>
+        <geometry>
+          <box size="${camera_width} ${camera_height} 0.01"/>
+        </geometry>
+        <material name="dark_grey">
+          <color rgba="0.3 0.3 0.3 1"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <box size="${camera_width} ${camera_height} 0.01"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <!-- Left camera -->
+    <link name="left_camera_frame"/>
+    <joint name="left_camera_joint" type="fixed">
+      <parent link="stereo_camera_base"/>
+      <child link="left_camera_frame"/>
+      <origin xyz="${-baseline/2} 0 0" rpy="0 0 0"/>
+    </joint>
+
+    <!-- Right camera -->
+    <link name="right_camera_frame"/>
+    <joint name="right_camera_joint" type="fixed">
+      <parent link="stereo_camera_base"/>
+      <child link="right_camera_frame"/>
+      <origin xyz="${baseline/2} 0 0" rpy="0 0 0"/>
+    </joint>
+
+    <!-- IMU -->
+    <link name="imu_link"/>
+    <joint name="imu_joint" type="fixed">
+      <parent link="stereo_camera_base"/>
+      <child link="imu_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+
+    <!-- Mount to parent -->
+    <joint name="camera_mount_joint" type="fixed">
+      <xacro:insert_block name="origin"/>
+      <parent link="${parent}"/>
+      <child link="stereo_camera_base"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- Create world link if needed -->
+  <link name="world"/>
+
+  <!-- Instantiate the stereo camera -->
+  <xacro:stereo_camera_macro parent="world">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:stereo_camera_macro>
+
+</robot> 
