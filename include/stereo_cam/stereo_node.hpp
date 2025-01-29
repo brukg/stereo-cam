@@ -8,6 +8,8 @@
 #include <sensor_msgs/msg/magnetic_field.hpp>
 #include <cv_bridge/cv_bridge.hpp>
 #include <image_transport/image_transport.hpp>
+#include <camera_info_manager/camera_info_manager.hpp>
+#include <sensor_msgs/msg/camera_info.hpp>
 
 #include "lccv/lccv.hpp"
 #include "stereo_cam/icm20948.hpp"
@@ -80,6 +82,12 @@ private:
     AccelRange accel_range_;
     GyroRange gyro_range_;
     int imu_rate_;
+
+    // Camera info managers
+    std::unique_ptr<camera_info_manager::CameraInfoManager> left_info_manager_;
+    std::unique_ptr<camera_info_manager::CameraInfoManager> right_info_manager_;
+    std::string left_camera_info_url_;
+    std::string right_camera_info_url_;
 };
 
 } // namespace stereo_cam

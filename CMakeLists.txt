@@ -10,15 +10,20 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(cv_bridge REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 find_package(image_transport REQUIRED)
+find_package(cv_bridge REQUIRED)
+find_package(camera_info_manager REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(PkgConfig REQUIRED)
 
 # Check for libcamera
 pkg_check_modules(LIBCAMERA REQUIRED IMPORTED_TARGET libcamera)
 
-# Set include directories for libcamera
+# Set include directories
 include_directories(
   include
   ${LIBCAMERA_INCLUDE_DIRS}
@@ -58,15 +63,26 @@ ament_target_dependencies(stereo_node
   sensor_msgs
   cv_bridge
   image_transport
+  camera_info_manager
 )
 
 target_link_libraries(stereo_node
   lccv_core
 )
 
+# Add mag_viz_node executable
+add_executable(mag_viz_node src/mag_viz_node.cpp)
+
+ament_target_dependencies(mag_viz_node
+  rclcpp
+  sensor_msgs
+  visualization_msgs
+)
+
 # Install targets
 install(TARGETS
   stereo_node
+  mag_viz_node
   lccv_core
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -90,8 +106,13 @@ ament_export_libraries(lccv_core)
 ament_export_dependencies(
   rclcpp
   sensor_msgs
+  std_msgs
+  visualization_msgs
   cv_bridge
   image_transport
+  camera_info_manager
+  tf2
+  tf2_ros
 )
 
 ament_package()

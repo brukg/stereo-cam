@@ -7,9 +7,14 @@ stereo_cam_node:
     left_camera_frame: "left_camera_frame"
     right_camera_frame: "right_camera_frame"
     imu_frame: "imu_link"
-    camera_info_url: 
-      left: "file:///$(find stereo_cam)/config/left_camera.yaml"
-      right: "file:///$(find stereo_cam)/config/right_camera.yaml"
     exposure_mode: "normal"
     gain: 1.0
-    exposure_time: 0  # 0 for auto 
+    exposure_time: 0  # 0 for auto
+    left_camera_info_url: "package://stereo_cam/config/left_camera_info.yaml"
+    right_camera_info_url: "package://stereo_cam/config/right_camera_info.yaml"
+
+  
+    stereo:
+      baseline: 0.06  # 60mm between cameras
+      focal_length: 2822.10  # pixels
+      principal_point: [1640.0, 1232.0]  # pixels 

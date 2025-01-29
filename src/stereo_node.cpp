@@ -1,5 +1,4 @@
 #include "stereo_cam/stereo_node.hpp"
-#include <sensor_msgs/msg/camera_info.hpp>
 
 namespace stereo_cam {
 
@@ -17,10 +16,12 @@ StereoNode::StereoNode(const rclcpp::NodeOptions& options)
     // Declare parameters with correct types
     this->declare_parameter("width", 640);
     this->declare_parameter("height", 480);
-    this->declare_parameter("frame_rate", 30);  // Explicitly integer
+    this->declare_parameter("frame_rate", 30);
     this->declare_parameter("frame_id", "camera_frame");
     this->declare_parameter("resolution_preset", "1080p");
-    this->declare_parameter("imu_rate", 100);  // Explicitly integer
+    this->declare_parameter("imu_rate", 100);
+    this->declare_parameter("left_camera_info_url", "");   // Changed from camera_info_url
+    this->declare_parameter("right_camera_info_url", "");  // Added for right camera
 
     // Get parameters
     width_ = this->get_parameter("width").as_int();
@@ -28,6 +29,10 @@ StereoNode::StereoNode(const rclcpp::NodeOptions& options)
     frame_rate_ = this->get_parameter("frame_rate").as_int();
     frame_id_ = this->get_parameter("frame_id").as_string();
     imu_rate_ = this->get_parameter("imu_rate").as_int();
+    
+    // Get camera info URLs
+    left_camera_info_url_ = this->get_parameter("left_camera_info_url").as_string();
+    right_camera_info_url_ = this->get_parameter("right_camera_info_url").as_string();
 }
 
 void StereoNode::initialize() {
@@ -75,6 +80,26 @@ void StereoNode::initialize() {
     imu_timer_ = this->create_wall_timer(
         std::chrono::milliseconds(1000 / imu_rate_),
         std::bind(&StereoNode::imu_callback, this));
+
+    // Initialize camera info managers with their respective URLs
+    left_info_manager_ = std::make_unique<camera_info_manager::CameraInfoManager>(
+        this, 
+        "left_camera",
+        left_camera_info_url_
+    );
+
+    right_info_manager_ = std::make_unique<camera_info_manager::CameraInfoManager>(
+        this,
+        "right_camera", 
+        right_camera_info_url_
+    );
+
+    if (!left_info_manager_->loadCameraInfo(left_camera_info_url_)) {
+        RCLCPP_WARN(get_logger(), "Failed to load left camera calibration");
+    }
+    if (!right_info_manager_->loadCameraInfo(right_camera_info_url_)) {
+        RCLCPP_WARN(get_logger(), "Failed to load right camera calibration");
+    }
 
     RCLCPP_INFO(this->get_logger(), "Stereo camera node initialized");
 }
@@ -128,12 +153,24 @@ void StereoNode::publish_images(const cv::Mat& left_img, const cv::Mat& right_im
     left_msg->header.frame_id = frame_id_;
     left_pub_.publish(left_msg);
 
+    // Get and publish left camera info
+    sensor_msgs::msg::CameraInfo left_info = left_info_manager_->getCameraInfo();
+    left_info.header.stamp = stamp;
+    left_info.header.frame_id = frame_id_;
+    left_info_pub_->publish(left_info);
+
     // Convert and publish right image
     sensor_msgs::msg::Image::SharedPtr right_msg = 
         cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", right_img).toImageMsg();
     right_msg->header.stamp = stamp;
     right_msg->header.frame_id = frame_id_;
     right_pub_.publish(right_msg);
+
+    // Get and publish right camera info
+    sensor_msgs::msg::CameraInfo right_info = right_info_manager_->getCameraInfo();
+    right_info.header.stamp = stamp;
+    right_info.header.frame_id = frame_id_;
+    right_info_pub_->publish(right_info);
 }
 
 void StereoNode::imu_callback() {
@@ -160,17 +197,6 @@ void StereoNode::imu_callback() {
         imu_msg.angular_velocity.y = gy * M_PI / 180.0;
         imu_msg.angular_velocity.z = gz * M_PI / 180.0;
 
-        // Update quaternion using AHRS algorithm
-        float halfT = 1.0f / (2.0f * imu_rate_);
-        float norm;
-        float vx, vy, vz;
-        float ex, ey, ez;
-        static float exInt = 0.0f, eyInt = 0.0f, ezInt = 0.0f;
-        const float Kp = 4.50f;
-        const float Ki = 1.0f;
-
-        // ... (AHRS algorithm implementation)
-
         // Set orientation quaternion
         imu_msg.orientation.w = q0;
         imu_msg.orientation.x = q1;
@@ -189,7 +215,6 @@ void StereoNode::imu_callback() {
         mag_msg.magnetic_field.x = mx;
         mag_msg.magnetic_field.y = my;
         mag_msg.magnetic_field.z = mz;
-
 
         mag_pub_->publish(mag_msg);
     } else {

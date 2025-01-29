@@ -2,21 +2,40 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>stereo_cam</name>
-  <version>0.1.0</version>
-  <description>ROS 2 stereo camera package using LCCV for dual Raspberry Pi cameras</description>
-  <maintainer email="bruk@signalbotics.com">Maintainer Name</maintainer>
-  <license>BSD-2-Clause</license>
+  <version>0.0.1</version>
+  <description>ROS 2 stereo camera driver for Raspberry Pi</description>
+  <maintainer email="your@email.com">Your Name</maintainer>
+  <license>Apache License 2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- Core ROS Dependencies -->
   <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
   <depend>sensor_msgs</depend>
-  <depend>cv_bridge</depend>
+  <depend>std_msgs</depend>
+  <depend>visualization_msgs</depend>
+
+  <!-- Camera Dependencies -->
   <depend>image_transport</depend>
+  <depend>cv_bridge</depend>
+  <depend>camera_info_manager</depend>
+
+  <!-- Transform Dependencies -->
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>xacro</depend>
+  <depend>urdf</depend>
+
+  <!-- System Dependencies -->
   <depend>libopencv-dev</depend>
+  <depend>libi2c-dev</depend>
+  <depend>libcamera-dev</depend>
 
-  <build_depend>libcamera-dev</build_depend>
+  <!-- Build Dependencies -->
+  <build_depend>pkg-config</build_depend>
 
+  <!-- Test Dependencies -->
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 
