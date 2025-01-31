@@ -55,6 +55,7 @@ add_executable(stereo_node
   src/main.cpp
   src/stereo_node.cpp
   src/icm20948.cpp
+  src/depth_node.cpp
 )
 
 ament_target_dependencies(stereo_node
@@ -64,6 +65,8 @@ ament_target_dependencies(stereo_node
   cv_bridge
   image_transport
   camera_info_manager
+  message_filters
+  OpenCV
 )
 
 target_link_libraries(stereo_node

@@ -37,7 +37,6 @@ def generate_launch_description():
         Node(
             package='stereo_cam',
             executable='stereo_node',
-            name='stereo_cam_node',
             parameters=[
                 LaunchConfiguration('config_file'),
                 {'robot_description': robot_description},

@@ -10,8 +10,8 @@ const std::vector<CameraConfig::Resolution> CameraConfig::SUPPORTED_MODES = {
     {640, 480, 206.65}    // VGA
 };
 
-StereoNode::StereoNode(const rclcpp::NodeOptions& options)
-    : Node("stereo_cam_node", options) {
+StereoNode::StereoNode(const rclcpp::NodeOptions& options, const std::string& name)
+    : Node(name, options) {
     
     // Only declare and get parameters in constructor
     this->declare_parameter("width", rclcpp::ParameterValue(640));

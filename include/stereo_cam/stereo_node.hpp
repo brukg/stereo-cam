@@ -35,7 +35,7 @@ struct CameraConfig {
 
 class StereoNode : public rclcpp::Node {
 public:
-    explicit StereoNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+    explicit StereoNode(const rclcpp::NodeOptions& options, const std::string& name = "stereo_node");
     ~StereoNode();
 
     void initialize();

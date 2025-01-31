@@ -90,7 +90,7 @@ Parameters can be configured through:
 The package includes a default configuration file at `config/camera_params.yaml`. You can modify this file or create your own:
 
 ```yaml
-stereo_cam_node:
+stereo_node:
   ros__parameters:
     width: 640
     height: 480
