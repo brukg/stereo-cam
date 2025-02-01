@@ -19,6 +19,7 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(PkgConfig REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 
 # Check for libcamera
 pkg_check_modules(LIBCAMERA REQUIRED IMPORTED_TARGET libcamera)
@@ -56,6 +57,7 @@ add_executable(stereo_node
   src/stereo_node.cpp
   src/icm20948.cpp
   src/depth_node.cpp
+  src/calib_utils.cpp
 )
 
 ament_target_dependencies(stereo_node
@@ -67,6 +69,7 @@ ament_target_dependencies(stereo_node
   camera_info_manager
   message_filters
   OpenCV
+  ament_index_cpp
 )
 
 target_link_libraries(stereo_node
@@ -82,11 +85,22 @@ ament_target_dependencies(mag_viz_node
   visualization_msgs
 )
 
+# Add stereo calibration executable
+add_executable(stereo_calib 
+  src/stereo_calib.cpp
+)
+
+ament_target_dependencies(stereo_calib
+  OpenCV
+  ament_index_cpp
+)
+
 # Install targets
 install(TARGETS
   stereo_node
   mag_viz_node
   lccv_core
+  stereo_calib
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -101,6 +115,12 @@ install(DIRECTORY
   config
   urdf
   DESTINATION share/${PROJECT_NAME}/
+)
+
+# Install Python scripts
+install(PROGRAMS
+  scripts/cap.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 # Export dependencies

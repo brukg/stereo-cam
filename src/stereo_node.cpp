@@ -156,6 +156,17 @@ void StereoNode::initialize() {
         RCLCPP_WARN(get_logger(), "Failed to load right camera calibration");
     }
 
+    // In initialize() function after creating camera info managers
+    std::string calib_file = this->declare_parameter("calibration_file", "");
+    if (!calib_file.empty()) {
+        sensor_msgs::msg::CameraInfo left_info, right_info;
+        if (CalibrationUtils::updateCameraInfo(calib_file, left_info, right_info)) {
+            left_info_manager_->setCameraInfo(left_info);
+            right_info_manager_->setCameraInfo(right_info);
+            RCLCPP_INFO(get_logger(), "Updated camera info from calibration file");
+        }
+    }
+
     RCLCPP_INFO(this->get_logger(), "Stereo camera node initialized");
 }
 

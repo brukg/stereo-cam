@@ -12,6 +12,7 @@ stereo_node:
     exposure_time: 0  # 0 for auto
     left_camera_info_url: "package://stereo_cam/config/left_camera_info.yaml"
     right_camera_info_url: "package://stereo_cam/config/right_camera_info.yaml"
+    calibration_file: "package://stereo_cam/config/StereoCalibration.yml"
 
   
     stereo:
