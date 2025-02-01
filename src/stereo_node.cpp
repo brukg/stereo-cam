@@ -160,7 +160,12 @@ void StereoNode::initialize() {
     std::string calib_file = this->declare_parameter("calibration_file", "");
     if (!calib_file.empty()) {
         sensor_msgs::msg::CameraInfo left_info, right_info;
-        if (CalibrationUtils::updateCameraInfo(calib_file, left_info, right_info)) {
+        // check if the content of the file is empty
+        std::ifstream file(calib_file);
+        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        if (content.empty()) {
+            RCLCPP_WARN(get_logger(), "Calibration file is empty, skipping update");
+        }else if (CalibrationUtils::updateCameraInfo(calib_file, left_info, right_info)) {
             left_info_manager_->setCameraInfo(left_info);
             right_info_manager_->setCameraInfo(right_info);
             RCLCPP_INFO(get_logger(), "Updated camera info from calibration file");

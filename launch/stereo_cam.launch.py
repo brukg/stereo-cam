@@ -29,7 +29,7 @@ def generate_launch_description():
         # Optional override arguments
         DeclareLaunchArgument(
             'resolution_preset',
-            default_value='1080p',
+            default_value='720p',
             description='Resolution preset (full, 1080p, 720p, vga)'
         ),
 

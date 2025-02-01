@@ -66,43 +66,51 @@ public:
 				std::placeholders::_2)
 		);
 
+		// Create display timer (30 Hz)
+		display_timer_ = this->create_wall_timer(
+			std::chrono::milliseconds(33),
+			std::bind(&StereoCalibrator::display_callback, this));
+
 		RCLCPP_INFO(get_logger(), "Stereo calibrator initialized");
 		RCLCPP_INFO(get_logger(), "Press 'q' to exit");
 		RCLCPP_INFO(get_logger(), "Press 'k' to save current stereo pair");
 		RCLCPP_INFO(get_logger(), "Press 'c' to start calibration");
-
-		// Start display thread
-		display_thread_ = std::thread(&StereoCalibrator::display_loop, this);
 	}
 
 	~StereoCalibrator() {
-		running_ = false;
-		if (display_thread_.joinable()) {
-			display_thread_.join();
-		}
 		cv::destroyAllWindows();
 	}
 
 private:
-	// Add display variables
 	cv::Mat display_image_;
 	std::mutex display_mutex_;
-	std::thread display_thread_;
+	rclcpp::TimerBase::SharedPtr display_timer_;
 	bool running_{true};
 
-	void display_loop() {
-		while (running_) {
-			cv::Mat current_image;
-			{
-				std::lock_guard<std::mutex> lock(display_mutex_);
-				if (!display_image_.empty()) {
-					current_image = display_image_.clone();
-				}
+	void display_callback() {
+		cv::Mat current_image;
+		{
+			std::lock_guard<std::mutex> lock(display_mutex_);
+			if (!display_image_.empty()) {
+				current_image = display_image_.clone();
 			}
-			if (!current_image.empty()) {
-				cv::imshow("Stereo Cameras", current_image);
+		}
+		
+		if (!current_image.empty()) {
+			cv::imshow("Stereo Cameras", current_image);
+			char key = cv::waitKey(1);
+
+			if (key == 'q') {
+				RCLCPP_INFO(get_logger(), "Shutting down...");
+				rclcpp::shutdown();
 			}
-			cv::waitKey(30);  // 30ms delay
+			else if (key == 'k') {
+				save_images(left_image_, right_image_);
+			}
+			else if (key == 'c') {
+				RCLCPP_INFO(get_logger(), "Starting calibration...");
+				perform_calibration();
+			}
 		}
 	}
 
@@ -111,11 +119,11 @@ private:
 		const sensor_msgs::msg::Image::ConstSharedPtr& right_msg)
 	{
 		try {
-			cv::Mat left_image = cv_bridge::toCvShare(left_msg, "bgr8")->image;
-			cv::Mat right_image = cv_bridge::toCvShare(right_msg, "bgr8")->image;
+			left_image_ = cv_bridge::toCvShare(left_msg, "bgr8")->image;
+			right_image_ = cv_bridge::toCvShare(right_msg, "bgr8")->image;
 
 			cv::Mat stereo_image;
-			cv::hconcat(left_image, right_image, stereo_image);
+			cv::hconcat(left_image_, right_image_, stereo_image);
 
 			// Resize for display if width is larger than 640
 			cv::Mat display_image = stereo_image.clone();
@@ -128,21 +136,6 @@ private:
 			{
 				std::lock_guard<std::mutex> lock(display_mutex_);
 				display_image_ = display_image.clone();
-			}
-
-			char key = cv::waitKey(1);
-
-			if (key == 'q') {
-				RCLCPP_INFO(get_logger(), "Shutting down...");
-				running_ = false;
-				rclcpp::shutdown();
-			}
-			else if (key == 'k') {
-				save_images(left_image, right_image);
-			}
-			else if (key == 'c') {
-				RCLCPP_INFO(get_logger(), "Starting calibration...");
-				perform_calibration();
 			}
 		}
 		catch (const std::exception& e) {
@@ -216,6 +209,10 @@ private:
 	int num_corners_horizontal_;
 	int square_size_mm_;
 	bool show_chess_corners_;
+
+	// Add these to store the latest images for saving
+	cv::Mat left_image_;
+	cv::Mat right_image_;
 };
 
 // Move all the calibration-related functions and structs here
