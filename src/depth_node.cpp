@@ -20,7 +20,7 @@ DepthNode::DepthNode(const rclcpp::NodeOptions& options, const std::string& name
 
     // Create publisher for depth map with intra-process communication
     depth_pub_ = this->create_publisher<sensor_msgs::msg::Image>(
-        "camera/depth", rclcpp::QoS(10).reliable());
+        "camera/depth/image_raw", rclcpp::QoS(10).reliable());
 
     // Create subscribers for stereo images with intra-process communication
     left_sub_.subscribe(this, "camera/left/image_raw", rmw_qos_profile_sensor_data);

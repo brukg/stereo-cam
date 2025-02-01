@@ -1,4 +1,4 @@
-#include <opencv2/features2d/features2d.hpp>
+#include <opencv2/features2d.hpp>
 #include <opencv2/opencv.hpp>
 #include <cctype>
 #include <stdio.h>
@@ -8,8 +8,218 @@
 #include <cstdio>
 #include <stdlib.h>
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/image.hpp>
+#include <cv_bridge/cv_bridge.hpp>
+#include <message_filters/subscriber.h>
+#include <message_filters/synchronizer.h>
+#include <message_filters/sync_policies/approximate_time.h>
+#include <filesystem>
+#include <fstream>
+#include <thread>
+#include <mutex>
 
-struct  CalibrationParam
+namespace stereo_cam {
+
+// Forward declarations
+void StereoCalibration(std::vector<std::string>imagelist, int numCornersVer, int numCornersHor, int numSquares, int ShowChessCorners);
+static bool readStringList(const std::string& filename, std::vector<std::string>& l);
+void ShowMatchResult(cv::Mat& srcImg, std::vector<cv::KeyPoint>& srcKeypoint, cv::Mat& dstImg,
+	std::vector<cv::KeyPoint>& dstKeypoint, std::vector<cv::DMatch>& goodMatch);
+
+class StereoCalibrator : public rclcpp::Node {
+public:
+	StereoCalibrator() : Node("stereo_calibrator") {
+		// Declare and get parameters with default values
+		this->declare_parameter("num_corners_vertical", 6);
+		this->declare_parameter("num_corners_horizontal", 4);
+		this->declare_parameter("square_size_mm", 30);
+		this->declare_parameter("show_chess_corners", true);
+
+		num_corners_vertical_ = this->get_parameter("num_corners_vertical").as_int();
+		num_corners_horizontal_ = this->get_parameter("num_corners_horizontal").as_int();
+		square_size_mm_ = this->get_parameter("square_size_mm").as_int();
+		show_chess_corners_ = this->get_parameter("show_chess_corners").as_bool();
+
+		RCLCPP_INFO(get_logger(), "Calibration parameters:");
+		RCLCPP_INFO(get_logger(), "Vertical corners: %d", num_corners_vertical_);
+		RCLCPP_INFO(get_logger(), "Horizontal corners: %d", num_corners_horizontal_);
+		RCLCPP_INFO(get_logger(), "Square size: %d mm", square_size_mm_);
+
+		// Create directories if they don't exist
+		image_dir_ = "left_right_image";
+		std::filesystem::create_directories(image_dir_);
+
+		// Set up synchronized subscribers
+		left_sub_.subscribe(this, "camera/left/image_raw");
+		right_sub_.subscribe(this, "camera/right/image_raw");
+
+		sync_ = std::make_shared<Synchronizer>(
+			SyncPolicy(10),
+			left_sub_,
+			right_sub_
+		);
+
+		sync_->registerCallback(
+			std::bind(&StereoCalibrator::sync_callback, this,
+				std::placeholders::_1,
+				std::placeholders::_2)
+		);
+
+		RCLCPP_INFO(get_logger(), "Stereo calibrator initialized");
+		RCLCPP_INFO(get_logger(), "Press 'q' to exit");
+		RCLCPP_INFO(get_logger(), "Press 'k' to save current stereo pair");
+		RCLCPP_INFO(get_logger(), "Press 'c' to start calibration");
+
+		// Start display thread
+		display_thread_ = std::thread(&StereoCalibrator::display_loop, this);
+	}
+
+	~StereoCalibrator() {
+		running_ = false;
+		if (display_thread_.joinable()) {
+			display_thread_.join();
+		}
+		cv::destroyAllWindows();
+	}
+
+private:
+	// Add display variables
+	cv::Mat display_image_;
+	std::mutex display_mutex_;
+	std::thread display_thread_;
+	bool running_{true};
+
+	void display_loop() {
+		while (running_) {
+			cv::Mat current_image;
+			{
+				std::lock_guard<std::mutex> lock(display_mutex_);
+				if (!display_image_.empty()) {
+					current_image = display_image_.clone();
+				}
+			}
+			if (!current_image.empty()) {
+				cv::imshow("Stereo Cameras", current_image);
+			}
+			cv::waitKey(30);  // 30ms delay
+		}
+	}
+
+	void sync_callback(
+		const sensor_msgs::msg::Image::ConstSharedPtr& left_msg,
+		const sensor_msgs::msg::Image::ConstSharedPtr& right_msg)
+	{
+		try {
+			cv::Mat left_image = cv_bridge::toCvShare(left_msg, "bgr8")->image;
+			cv::Mat right_image = cv_bridge::toCvShare(right_msg, "bgr8")->image;
+
+			cv::Mat stereo_image;
+			cv::hconcat(left_image, right_image, stereo_image);
+
+			// Resize for display if width is larger than 640
+			cv::Mat display_image = stereo_image.clone();
+			if (display_image.cols > 640) {
+				double scale = 640.0 / display_image.cols;
+				cv::resize(display_image, display_image, cv::Size(), scale, scale);
+			}
+
+			// Update display image thread-safely
+			{
+				std::lock_guard<std::mutex> lock(display_mutex_);
+				display_image_ = display_image.clone();
+			}
+
+			char key = cv::waitKey(1);
+
+			if (key == 'q') {
+				RCLCPP_INFO(get_logger(), "Shutting down...");
+				running_ = false;
+				rclcpp::shutdown();
+			}
+			else if (key == 'k') {
+				save_images(left_image, right_image);
+			}
+			else if (key == 'c') {
+				RCLCPP_INFO(get_logger(), "Starting calibration...");
+				perform_calibration();
+			}
+		}
+		catch (const std::exception& e) {
+			RCLCPP_ERROR(get_logger(), "Error processing images: %s", e.what());
+		}
+	}
+
+	void save_images(const cv::Mat& left_image, const cv::Mat& right_image) {
+		std::string left_name = image_dir_ + "/left" + std::to_string(image_count_) + ".jpg";
+		std::string right_name = image_dir_ + "/right" + std::to_string(image_count_) + ".jpg";
+
+		cv::imwrite(left_name, left_image);
+		cv::imwrite(right_name, right_image);
+		RCLCPP_INFO(get_logger(), "Saved image pair %d", image_count_);
+		image_count_++;
+
+		// Generate/update XML file for later use
+		std::ofstream xml_file("stereo_calib.xml");
+		xml_file << "<?xml version=\"1.0\"?>\n<opencv_storage>\n<imagelist>\n";
+		for (int i = 0; i < image_count_; i++) {
+			xml_file << "./" << image_dir_ << "/left" << i << ".jpg\n";
+			xml_file << "./" << image_dir_ << "/right" << i << ".jpg\n";
+		}
+		xml_file << "</imagelist>\n</opencv_storage>";
+		xml_file.close();
+		
+		RCLCPP_INFO(get_logger(), "Updated stereo_calib.xml");
+	}
+
+	void perform_calibration() {
+		if (image_count_ > 0) {
+			// If we just captured images, use them directly
+			std::vector<std::string> image_list;
+			for (int i = 0; i < image_count_; i++) {
+				image_list.push_back(image_dir_ + "/left" + std::to_string(i) + ".jpg");
+				image_list.push_back(image_dir_ + "/right" + std::to_string(i) + ".jpg");
+			}
+			StereoCalibration(image_list, 
+				num_corners_vertical_,
+				num_corners_horizontal_,
+				square_size_mm_,
+				show_chess_corners_);
+		} else {
+			// Try to load existing XML file
+			std::vector<std::string> image_list;
+			if (!readStringList("stereo_calib.xml", image_list)) {
+				RCLCPP_ERROR(get_logger(), "No images captured and no stereo_calib.xml found!");
+				return;
+			}
+			StereoCalibration(image_list,
+				num_corners_vertical_,
+				num_corners_horizontal_,
+				square_size_mm_,
+				show_chess_corners_);
+		}
+	}
+
+	message_filters::Subscriber<sensor_msgs::msg::Image> left_sub_;
+	message_filters::Subscriber<sensor_msgs::msg::Image> right_sub_;
+
+	using SyncPolicy = message_filters::sync_policies::ApproximateTime<
+		sensor_msgs::msg::Image, sensor_msgs::msg::Image>;
+	using Synchronizer = message_filters::Synchronizer<SyncPolicy>;
+	std::shared_ptr<Synchronizer> sync_;
+
+	std::string image_dir_;
+	int image_count_{0};
+
+	// Add these member variables
+	int num_corners_vertical_;
+	int num_corners_horizontal_;
+	int square_size_mm_;
+	bool show_chess_corners_;
+};
+
+// Move all the calibration-related functions and structs here
+struct CalibrationParam
 {
 	cv::Mat intrinsic_left;
 	cv::Mat distCoeffs_left;
@@ -39,8 +249,6 @@ struct  CalibrationParam
 	}
 };
 
-
-
 void WriteObjectYml(const char* filename, const char* variablename, const cv::Mat &source)
 {
 	cv::FileStorage fs(filename, cv::FileStorage::WRITE);
@@ -69,6 +277,7 @@ void ReadObjectYml(const char* filename, CalibrationParam&Calibrationparam)
 	fs["Q"] >> Calibrationparam.Q;
 	fs.release();
 }
+
 static bool readStringList(const std::string& filename, std::vector<std::string>& l)
 {
 	l.resize(0);
@@ -83,7 +292,8 @@ static bool readStringList(const std::string& filename, std::vector<std::string>
 		l.push_back((std::string)*it);
 	return true;
 }
-void StereoCalibration(std::vector<std::string>imagelist, int numCornersVer, int numCornersHor, int numSquares ,int ShowChessCorners)
+
+void StereoCalibration(std::vector<std::string>imagelist, int numCornersVer, int numCornersHor, int numSquares, int ShowChessCorners)
 {
 	if (numCornersVer <= 0 || numCornersHor <= 0 || numSquares <= 0) {
 		throw std::invalid_argument("Invalid chessboard parameters");
@@ -109,7 +319,7 @@ void StereoCalibration(std::vector<std::string>imagelist, int numCornersVer, int
 		}	
 	}
 	cv::Size s1, s2;
-	for (int i = 0; i < imagelist.size()/2; i++)
+	for (size_t i = 0; i < imagelist.size()/2; i++)
 	{
 		
 		image_l = cv::imread(imagelist[2*i]);
@@ -186,10 +396,12 @@ void StereoCalibration(std::vector<std::string>imagelist, int numCornersVer, int
 	std::cout << "Stereo Calibration done with RMS error = " << rms << std::endl;
 
 	std::cout << "Starting Rectification" << std::endl;
-	stereoRectify(intrinsic_left, distCoeffs_left, intrinsic_right, distCoeffs_right, s1, R, T, R_L, R_R, P1, P2, Q, cv::CALIB_ZERO_DISPARITY, 0, s1, &validROIL, &validROIR);//
+	stereoRectify(intrinsic_left, distCoeffs_left, intrinsic_right, distCoeffs_right, s1, R, T, R_L, R_R, P1, P2, Q, cv::CALIB_ZERO_DISPARITY, 0, s1, &validROIL, &validROIR);
 	std::cout << "Rectification Done" << std::endl;
+
+	// Save calibration
 	std::string package_path = ament_index_cpp::get_package_share_directory("stereo_cam");
-	std::string calib_file = package_path + "/config/StereoCalibration.yml";
+	std::string calib_file = package_path + "/config/StereoCalibration.yaml";
 	std::cout << "Save Calibration to " << calib_file << std::endl;
 	cv::FileStorage fs(calib_file, cv::FileStorage::WRITE);
 	fs << "image_width" << s1.width;
@@ -209,9 +421,47 @@ void StereoCalibration(std::vector<std::string>imagelist, int numCornersVer, int
 	fs << "validROIR" << validROIR;
 	fs.release();
 	std::cout << "Done Calibration" << std::endl;
+
+	// Compute rectification maps
+	cv::Mat map1x, map1y, map2x, map2y;
+	cv::initUndistortRectifyMap(intrinsic_left, distCoeffs_left, R_L, P1, s1, CV_32FC1, map1x, map1y);
+	cv::initUndistortRectifyMap(intrinsic_right, distCoeffs_right, R_R, P2, s1, CV_32FC1, map2x, map2y);
+
+	// Now load a pair and show rectified matches
+	cv::Mat img1 = cv::imread(imagelist[0]);
+	cv::Mat img2 = cv::imread(imagelist[1]);
+	
+	// Rectify the images
+	cv::Mat rect1, rect2;
+	cv::remap(img1, rect1, map1x, map1y, cv::INTER_LINEAR);
+	cv::remap(img2, rect2, map2x, map2y, cv::INTER_LINEAR);
+
+	// Detect features
+	cv::Ptr<cv::FeatureDetector> detector = cv::SIFT::create();
+	std::vector<cv::KeyPoint> keypoints1, keypoints2;
+	cv::Mat descriptors1, descriptors2;
+	
+	detector->detectAndCompute(rect1, cv::Mat(), keypoints1, descriptors1);
+	detector->detectAndCompute(rect2, cv::Mat(), keypoints2, descriptors2);
+
+	// Match features
+	std::vector<cv::DMatch> good_matches;
+	cv::Ptr<cv::DescriptorMatcher> matcher = cv::DescriptorMatcher::create(cv::DescriptorMatcher::FLANNBASED);
+	std::vector<std::vector<cv::DMatch>> knn_matches;
+	matcher->knnMatch(descriptors1, descriptors2, knn_matches, 2);
+
+	// Filter good matches
+	for (size_t i = 0; i < knn_matches.size(); i++) {
+		if (knn_matches[i][0].distance < 0.7f * knn_matches[i][1].distance) {
+			good_matches.push_back(knn_matches[i][0]);
+		}
+	}
+
+	// Show matches
+	ShowMatchResult(rect1, keypoints1, rect2, keypoints2, good_matches);
+
 	return;
 }
-
 
 void ShowMatchResult(cv::Mat&srcImg, std::vector<cv::KeyPoint>&srcKeypoint, cv::Mat&dstImg,
 	std::vector<cv::KeyPoint>&dstKeypoint, std::vector<cv::DMatch>&goodMatch)
@@ -222,109 +472,37 @@ void ShowMatchResult(cv::Mat&srcImg, std::vector<cv::KeyPoint>&srcKeypoint, cv::
 	cv::Mat img_matches;
 	cv::drawMatches(srcImg, srcKeypoint, dstImg, dstKeypoint, goodMatch, img_matches,
 		cv::Scalar::all(-1), cv::Scalar::all(-1), std::vector<char>(), cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
-	imshow("Good Matches", img_matches);
-	cv::imwrite("img_matches.jpg", img_matches);
+
+	// Resize for display if width is larger than 640
+	cv::Mat display_img = img_matches.clone();
+	if (display_img.cols > 640) {
+		double scale = 640.0 / display_img.cols;
+		cv::resize(display_img, display_img, cv::Size(), scale, scale);
+	}
+
+	imshow("Good Matches", display_img);
+	cv::imwrite("img_matches.jpg", img_matches);  // Save original size
 	std::cout << "Good MatchPoint Num is :" << goodMatch.size() << std::endl;
 	cv::waitKey(0);
 	return;
-
 }
-void StitcingImages(cv::Mat &srcImg1, cv::Mat&srcImg2, std::string ImageName)
-{
 
-	cv::Mat img_merge;
-	cv::Size size(srcImg1.cols + srcImg2.cols, MAX(srcImg1.rows, srcImg2.rows));
-	img_merge.create(size, CV_MAKETYPE(srcImg1.depth(), 3));
-	img_merge = cv::Scalar::all(0);
-	cv::Mat outImg_left, outImg_right;
-	outImg_left = img_merge(cv::Rect(0, 0, srcImg1.cols, srcImg1.rows));
-	outImg_right = img_merge(cv::Rect(srcImg1.cols, 0, srcImg2.cols, srcImg2.rows));
-	srcImg1.copyTo(outImg_left);
-	srcImg2.copyTo(outImg_right);
-	//namedWindow("image1", 0);
-	//imshow("image1", img_merge);
-	//waitKey();
-	cv::imwrite(ImageName, img_merge);
-	return;
 
-}
+} // namespace stereo_cam
+
 int main(int argc,char** argv)
 {
+	rclcpp::init(argc, argv);
+	auto node = std::make_shared<stereo_cam::StereoCalibrator>();
+	
 	try {
-		// Use command line arguments if provided, otherwise use defaults
-		int numCornersHor = (argc > 1) ? std::stoi(argv[1]) : 8;
-		int numCornersVer = (argc > 2) ? std::stoi(argv[2]) : 11;
-		int numSquares = (argc > 3) ? std::stoi(argv[3]) : 25;
-		bool showDebug = (argc > 4) ? (std::stoi(argv[4]) != 0) : true;
-		
-		std::string rectifyImageSavePath = "Stereo_Calibration/rectifyImage";
-		std::string imagelistfn="stereo_calib.xml";
-		std::vector<std::string> imagelist;
-		bool ok = readStringList(imagelistfn, imagelist);
-		if (!ok || imagelist.empty())
-		{
-			std::cout << "can not open " << imagelistfn << " or the string list is empty" << std::endl;
-		}
-		StereoCalibration(imagelist, numCornersVer, numCornersHor, numSquares,showDebug);
-		CalibrationParam Calibrationparam;
-		ReadObjectYml("StereoCalibration.yml", Calibrationparam);
-		for (int i = 0; i < imagelist.size() / 2; i++)
-		{
-			cv::Mat image_l = cv::imread(imagelist[i*2]);
-			cv::Mat image_r = cv::imread(imagelist[i * 2+1]);
-			cv::Size s1, s2;
-			s1 = image_l.size();
-			s2 = image_r.size();
-			cv::Mat mapLx, mapLy, mapRx, mapRy;
-			cv::initUndistortRectifyMap(Calibrationparam.intrinsic_left, Calibrationparam.distCoeffs_left, Calibrationparam.R_L, 
-				Calibrationparam.P1, s1, CV_16SC2, mapLx, mapLy);
-			cv::initUndistortRectifyMap(Calibrationparam.intrinsic_right, Calibrationparam.distCoeffs_right, Calibrationparam.R_R, 
-				Calibrationparam.P2, s1, CV_16SC2, mapRx, mapRy);
-			cv::Mat rectifyImageL2, rectifyImageR2;
-			cv::remap(image_l, rectifyImageL2, mapLx, mapLy, cv::INTER_LINEAR);
-			cv::remap(image_r, rectifyImageR2, mapRx, mapRy, cv::INTER_LINEAR);
-			std::string Imagename_L = rectifyImageSavePath + imagelist[i * 2];
-			std::string Imagename_R = rectifyImageSavePath + imagelist[i * 2+1];
-			cv::imwrite(Imagename_L, rectifyImageL2);
-			cv::imwrite(Imagename_R, rectifyImageR2);
-			if(showDebug)
-			{
-				cv::imshow("rectifyImageL", rectifyImageL2);
-				cv::imshow("rectifyImageR", rectifyImageR2);
-				cv::waitKey(2);
-			}
-			
-			cv::Mat canvas;
-			double sf;
-			int w, h;
-			sf = 1080. / MAX(s1.width, s1.height);
-			w = cvRound(s1.width * sf);
-			h = cvRound(s1.height * sf);
-			canvas.create(h, w * 2, CV_8UC3);
-			cv::Mat canvasPart = canvas(cv::Rect(w * 0, 0, w, h));
-			cv::resize(rectifyImageL2, canvasPart, canvasPart.size(), 0, 0, cv::INTER_AREA); 
-			cv::Rect vroiL(cvRound(Calibrationparam.validROIL.x*sf), cvRound(Calibrationparam.validROIL.y*sf), 
-				cvRound(Calibrationparam.validROIL.width*sf), cvRound(Calibrationparam.validROIL.height*sf));
-			cv::rectangle(canvasPart, vroiL, cv::Scalar(0, 0, 255), 3, 8);  
-			canvasPart = canvas(cv::Rect(w, 0, w, h));   
-			cv::resize(rectifyImageR2, canvasPart, canvasPart.size(), 0, 0, cv::INTER_LINEAR);
-			cv::Rect vroiR(cvRound(Calibrationparam.validROIR.x * sf), cvRound(Calibrationparam.validROIR.y*sf),
-				cvRound(Calibrationparam.validROIR.width * sf), cvRound(Calibrationparam.validROIR.height * sf));
-			cv::rectangle(canvasPart, vroiR, cv::Scalar(0, 255, 0), 3, 8);
-			for (int i = 0; i < canvas.rows; i += 40)
-			{
-				cv::line(canvas, cv::Point(0, i), cv::Point(canvas.cols, i), cv::Scalar(0, 255, 0), 1, 8);
-			}
-			if(showDebug)
-			{
-				cv::imshow("rectified", canvas);
-				cv::imwrite("rectified.jpg",canvas);
-				cv::waitKey(0);
-			}
-		}
-		return 0;
-	} catch (const std::exception& e) {
-		std::cerr << "Error: " << e.what() << std::endl;
-		return -1;
+		rclcpp::spin(node);
 	}
+	catch (const std::exception& e) {
+		RCLCPP_ERROR(node->get_logger(), "Error: %s", e.what());
+	}
+
+	cv::destroyAllWindows();
+	rclcpp::shutdown();
+	return 0;
 }

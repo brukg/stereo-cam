@@ -92,6 +92,10 @@ add_executable(stereo_calib
 
 ament_target_dependencies(stereo_calib
   OpenCV
+  rclcpp
+  sensor_msgs
+  cv_bridge
+  message_filters
   ament_index_cpp
 )
 
