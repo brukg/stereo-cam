@@ -202,3 +202,4 @@ This means:
 - [libcamera Documentation](https://libcamera.org/docs.html)
 - [ROS 2 Documentation](https://docs.ros.org/en/humble/)
 - [LCCV Library](https://github.com/kbarni/LCCV)
+- [IMX219-83 Camera Documentation](https://www.waveshare.com/wiki/IMX219-83_Stereo_Camera)
