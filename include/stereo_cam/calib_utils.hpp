@@ -21,7 +21,8 @@ private:
         const cv::Mat& D,
         const cv::Mat& R,
         const cv::Mat& P,
-        sensor_msgs::msg::CameraInfo& info
+        sensor_msgs::msg::CameraInfo& info,
+        const cv::Size& image_size
     );
 };
 

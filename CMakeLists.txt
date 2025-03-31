@@ -70,6 +70,8 @@ ament_target_dependencies(stereo_node
   message_filters
   OpenCV
   ament_index_cpp
+  tf2
+  tf2_ros
 )
 
 target_link_libraries(stereo_node

@@ -10,6 +10,7 @@
 #include <image_transport/image_transport.hpp>
 #include <camera_info_manager/camera_info_manager.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
+#include <tf2_ros/static_transform_broadcaster.h>
 
 #include "lccv/lccv.hpp"
 #include "stereo_cam/icm20948.hpp"
@@ -40,6 +41,7 @@ public:
 
     void initialize();
     void on_configure();
+    void run();  // Move run() to public section
 
 private:
     void timer_callback();
@@ -89,6 +91,23 @@ private:
     std::unique_ptr<camera_info_manager::CameraInfoManager> right_info_manager_;
     std::string left_camera_info_url_;
     std::string right_camera_info_url_;
+
+    // Add broadcaster
+    std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_tf_broadcaster_;
+    
+    // Add frame IDs as member variables
+    std::string left_camera_frame_{"left_camera_frame"};
+    std::string right_camera_frame_{"right_camera_frame"};
+    std::string imu_frame_{"imu_link"};
+    double stereo_baseline_;
+
+    // Add function declaration
+    void setup_static_transforms();
+
+    // Add to member variables
+    bool enable_depth_;
+
+    std::atomic<bool> running_{false};
 };
 
 } // namespace stereo_cam
